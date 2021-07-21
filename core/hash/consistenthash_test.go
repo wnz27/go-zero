@@ -50,6 +50,15 @@ func TestConsistentHash(t *testing.T) {
 	assert.True(t, entropy > .95)
 }
 
+func TestTbs(t *testing.T) {
+	a := 11
+	res := t_b_s(a)
+	fmt.Println(res)
+	b := -1
+	res2 := t_b_s(b)
+	fmt.Println(res2)
+}
+
 func TestConsistentHashIncrementalTransfer(t *testing.T) {
 	prefix := "anything"
 	create := func() *ConsistentHash {
