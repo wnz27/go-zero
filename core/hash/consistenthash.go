@@ -29,7 +29,7 @@ type (
 		keys     []uint64                        // 存储虚拟节点hash
 		ring     map[uint64][]interface{}        // 虚拟节点与实际node的对应关系
 		nodes    map[string]lang.PlaceholderType // 实际节点存储【便于快速查找，所以使用map】
-		lock     sync.RWMutex
+		lock     sync.RWMutex                    // 锁
 	}
 )
 
@@ -103,7 +103,7 @@ func (h *ConsistentHash) AddWithWeight(node interface{}, weight int) {
 }
 
 // 测试下越界问题
-func t_b_s(hash int) int{
+func t_b_s(hash int) int {
 	keys := []int{1, 2, 4, 5, 6, 10}
 	res := sort.Search(len(keys), func(i int) bool {
 		return keys[i] >= hash
