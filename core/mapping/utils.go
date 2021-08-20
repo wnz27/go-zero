@@ -63,6 +63,7 @@ func Repr(v interface{}) string {
 	// if func (v *Type) String() string, we can't use Elem()
 	switch vt := v.(type) {
 	case fmt.Stringer:
+		// 只要节点实现String() 方法应该就可以走到这里
 		return vt.String()
 	}
 

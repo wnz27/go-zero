@@ -36,7 +36,7 @@ require (
 	github.com/stretchr/testify v1.7.0
 	github.com/urfave/cli v1.22.5
 	github.com/zeromicro/antlr v0.0.1
-	github.com/zeromicro/ddl-parser v0.0.0-20210712021150-63520aca7348 // indirect
+	github.com/zeromicro/ddl-parser v0.0.0-20210712021150-63520aca7348
 	go.etcd.io/etcd/api/v3 v3.5.0
 	go.etcd.io/etcd/client/v3 v3.5.0
 	go.uber.org/automaxprocs v1.3.0
