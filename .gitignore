@@ -10,12 +10,19 @@
 !*/
 !api
 
+# ignore
 .idea
 **/.DS_Store
 **/logs
 
+# for test purpose
+**/adhoc
+go.work
+go.work.sum
+
 # gitlab ci
 .cache
+.golangci.yml
 
 # vim auto backup file
 *~

@@ -7,10 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tal-tech/go-zero/zrpc/internal/balancer/p2c"
-	"github.com/tal-tech/go-zero/zrpc/internal/clientinterceptors"
-	"github.com/tal-tech/go-zero/zrpc/internal/resolver"
+	"github.com/zeromicro/go-zero/zrpc/internal/balancer/p2c"
+	"github.com/zeromicro/go-zero/zrpc/internal/clientinterceptors"
+	"github.com/zeromicro/go-zero/zrpc/resolver"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -19,7 +21,7 @@ const (
 )
 
 func init() {
-	resolver.RegisterResolver()
+	resolver.Register()
 }
 
 type (
@@ -30,7 +32,9 @@ type (
 
 	// A ClientOptions is a client options.
 	ClientOptions struct {
+		NonBlock    bool
 		Timeout     time.Duration
+		Secure      bool
 		DialOptions []grpc.DialOption
 	}
 
@@ -45,7 +49,10 @@ type (
 // NewClient returns a Client.
 func NewClient(target string, opts ...ClientOption) (Client, error) {
 	var cli client
-	opts = append([]ClientOption{WithDialOption(grpc.WithBalancerName(p2c.Name))}, opts...)
+
+	svcCfg := fmt.Sprintf(`{"loadBalancingPolicy":"%s"}`, p2c.Name)
+	balancerOpt := WithDialOption(grpc.WithDefaultServiceConfig(svcCfg))
+	opts = append([]ClientOption{balancerOpt}, opts...)
 	if err := cli.dial(target, opts...); err != nil {
 		return nil, err
 	}
@@ -63,17 +70,27 @@ func (c *client) buildDialOptions(opts ...ClientOption) []grpc.DialOption {
 		opt(&cliOpts)
 	}
 
-	options := []grpc.DialOption{
-		grpc.WithInsecure(),
-		grpc.WithBlock(),
+	var options []grpc.DialOption
+	if !cliOpts.Secure {
+		options = append([]grpc.DialOption(nil), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	if !cliOpts.NonBlock {
+		options = append(options, grpc.WithBlock())
+	}
+
+	options = append(options,
 		WithUnaryClientInterceptors(
-			clientinterceptors.TracingInterceptor,
+			clientinterceptors.UnaryTracingInterceptor,
 			clientinterceptors.DurationInterceptor,
 			clientinterceptors.PrometheusInterceptor,
 			clientinterceptors.BreakerInterceptor,
 			clientinterceptors.TimeoutInterceptor(cliOpts.Timeout),
 		),
-	}
+		WithStreamClientInterceptors(
+			clientinterceptors.StreamTracingInterceptor,
+		),
+	)
 
 	return append(options, cliOpts.DialOptions...)
 }
@@ -107,10 +124,32 @@ func WithDialOption(opt grpc.DialOption) ClientOption {
 	}
 }
 
+// WithNonBlock sets the dialing to be nonblock.
+func WithNonBlock() ClientOption {
+	return func(options *ClientOptions) {
+		options.NonBlock = true
+	}
+}
+
+// WithStreamClientInterceptor returns a func to customize a ClientOptions with given interceptor.
+func WithStreamClientInterceptor(interceptor grpc.StreamClientInterceptor) ClientOption {
+	return func(options *ClientOptions) {
+		options.DialOptions = append(options.DialOptions, WithStreamClientInterceptors(interceptor))
+	}
+}
+
 // WithTimeout returns a func to customize a ClientOptions with given timeout.
 func WithTimeout(timeout time.Duration) ClientOption {
 	return func(options *ClientOptions) {
 		options.Timeout = timeout
+	}
+}
+
+// WithTransportCredentials return a func to make the gRPC calls secured with given credentials.
+func WithTransportCredentials(creds credentials.TransportCredentials) ClientOption {
+	return func(options *ClientOptions) {
+		options.Secure = true
+		options.DialOptions = append(options.DialOptions, grpc.WithTransportCredentials(creds))
 	}
 }
 

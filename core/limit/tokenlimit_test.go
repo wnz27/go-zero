@@ -1,18 +1,43 @@
 package limit
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/core/logx"
-	"github.com/tal-tech/go-zero/core/stores/redis"
-	"github.com/tal-tech/go-zero/core/stores/redis/redistest"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/stores/redis"
+	"github.com/zeromicro/go-zero/core/stores/redis/redistest"
 )
 
 func init() {
 	logx.Disable()
+}
+
+func TestTokenLimit_WithCtx(t *testing.T) {
+	s, err := miniredis.Run()
+	assert.Nil(t, err)
+
+	const (
+		total = 100
+		rate  = 5
+		burst = 10
+	)
+	l := NewTokenLimiter(rate, burst, redis.New(s.Addr()), "tokenlimit")
+	defer s.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ok := l.AllowCtx(ctx)
+	assert.True(t, ok)
+
+	cancel()
+	for i := 0; i < total; i++ {
+		ok := l.AllowCtx(ctx)
+		assert.False(t, ok)
+		assert.False(t, l.monitorStarted)
+	}
 }
 
 func TestTokenLimit_Rescue(t *testing.T) {
@@ -24,7 +49,7 @@ func TestTokenLimit_Rescue(t *testing.T) {
 		rate  = 5
 		burst = 10
 	)
-	l := NewTokenLimiter(rate, burst, redis.NewRedis(s.Addr(), redis.NodeType), "tokenlimit")
+	l := NewTokenLimiter(rate, burst, redis.New(s.Addr()), "tokenlimit")
 	s.Close()
 
 	var allowed int

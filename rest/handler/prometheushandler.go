@@ -5,10 +5,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tal-tech/go-zero/core/metric"
-	"github.com/tal-tech/go-zero/core/prometheus"
-	"github.com/tal-tech/go-zero/core/timex"
-	"github.com/tal-tech/go-zero/rest/internal/security"
+	"github.com/zeromicro/go-zero/core/metric"
+	"github.com/zeromicro/go-zero/core/timex"
+	"github.com/zeromicro/go-zero/rest/internal/response"
 )
 
 const serverNamespace = "http_server"
@@ -35,13 +34,9 @@ var (
 // PrometheusHandler returns a middleware that reports stats to prometheus.
 func PrometheusHandler(path string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		if !prometheus.Enabled() {
-			return next
-		}
-
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			startTime := timex.Now()
-			cw := &security.WithCodeResponseWriter{Writer: w}
+			cw := &response.WithCodeResponseWriter{Writer: w}
 			defer func() {
 				metricServerReqDur.Observe(int64(timex.Since(startTime)/time.Millisecond), path)
 				metricServerReqCodeTotal.Inc(path, strconv.Itoa(cw.Code))

@@ -15,7 +15,7 @@ type Foo struct {
 	StrWithTagAndOption string `key:"stringwithtag,string"`
 }
 
-func TestDeferInt(t *testing.T) {
+func TestDerefInt(t *testing.T) {
 	i := 1
 	s := "hello"
 	number := struct {
@@ -60,6 +60,51 @@ func TestDeferInt(t *testing.T) {
 	}
 }
 
+func TestDerefValInt(t *testing.T) {
+	i := 1
+	s := "hello"
+	number := struct {
+		f float64
+	}{
+		f: 6.4,
+	}
+	cases := []struct {
+		t      reflect.Value
+		expect reflect.Kind
+	}{
+		{
+			t:      reflect.ValueOf(i),
+			expect: reflect.Int,
+		},
+		{
+			t:      reflect.ValueOf(&i),
+			expect: reflect.Int,
+		},
+		{
+			t:      reflect.ValueOf(s),
+			expect: reflect.String,
+		},
+		{
+			t:      reflect.ValueOf(&s),
+			expect: reflect.String,
+		},
+		{
+			t:      reflect.ValueOf(number.f),
+			expect: reflect.Float64,
+		},
+		{
+			t:      reflect.ValueOf(&number.f),
+			expect: reflect.Float64,
+		},
+	}
+
+	for _, each := range cases {
+		t.Run(each.t.String(), func(t *testing.T) {
+			assert.Equal(t, each.expect, ensureValue(each.t).Kind())
+		})
+	}
+}
+
 func TestParseKeyAndOptionWithoutTag(t *testing.T) {
 	var foo Foo
 	rte := reflect.TypeOf(&foo).Elem()
@@ -88,6 +133,82 @@ func TestParseKeyAndOptionWithTagAndOption(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "stringwithtag", key)
 	assert.True(t, options.FromString)
+}
+
+func TestParseSegments(t *testing.T) {
+	tests := []struct {
+		input  string
+		expect []string
+	}{
+		{
+			input:  "",
+			expect: []string{},
+		},
+		{
+			input:  ",",
+			expect: []string{""},
+		},
+		{
+			input:  "foo,",
+			expect: []string{"foo"},
+		},
+		{
+			input: ",foo",
+			// the first empty string cannot be ignored, it's the key.
+			expect: []string{"", "foo"},
+		},
+		{
+			input:  "foo",
+			expect: []string{"foo"},
+		},
+		{
+			input:  "foo,bar",
+			expect: []string{"foo", "bar"},
+		},
+		{
+			input:  "foo,bar,baz",
+			expect: []string{"foo", "bar", "baz"},
+		},
+		{
+			input:  "foo,options=a|b",
+			expect: []string{"foo", "options=a|b"},
+		},
+		{
+			input:  "foo,bar,default=[baz,qux]",
+			expect: []string{"foo", "bar", "default=[baz,qux]"},
+		},
+		{
+			input:  "foo,bar,options=[baz,qux]",
+			expect: []string{"foo", "bar", "options=[baz,qux]"},
+		},
+		{
+			input:  `foo\,bar,options=[baz,qux]`,
+			expect: []string{`foo,bar`, "options=[baz,qux]"},
+		},
+		{
+			input:  `foo,bar,options=\[baz,qux]`,
+			expect: []string{"foo", "bar", "options=[baz", "qux]"},
+		},
+		{
+			input:  `foo,bar,options=[baz\,qux]`,
+			expect: []string{"foo", "bar", `options=[baz\,qux]`},
+		},
+		{
+			input:  `foo\,bar,options=[baz,qux],default=baz`,
+			expect: []string{`foo,bar`, "options=[baz,qux]", "default=baz"},
+		},
+		{
+			input:  `foo\,bar,options=[baz,qux, quux],default=[qux, baz]`,
+			expect: []string{`foo,bar`, "options=[baz,qux, quux]", "default=[qux, baz]"},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.input, func(t *testing.T) {
+			assert.ElementsMatch(t, test.expect, parseSegments(test.input))
+		})
+	}
 }
 
 func TestValidatePtrWithNonPtr(t *testing.T) {
@@ -208,6 +329,12 @@ func TestRepr(t *testing.T) {
 		{
 			newMockPtr(),
 			"mockptr",
+		},
+		{
+			&mockOpacity{
+				val: 1,
+			},
+			"{1}",
 		},
 		{
 			true,

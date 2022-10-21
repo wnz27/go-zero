@@ -1,31 +1,53 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/core/stringx"
-	"github.com/tal-tech/go-zero/core/trace"
-	"github.com/tal-tech/go-zero/core/trace/tracespec"
+	ztrace "github.com/zeromicro/go-zero/core/trace"
+	"github.com/zeromicro/go-zero/rest/chain"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
-func TestTracingHandler(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "http://localhost", nil)
+func TestOtelHandler(t *testing.T) {
+	ztrace.StartAgent(ztrace.Config{
+		Name:     "go-zero-test",
+		Endpoint: "http://localhost:14268/api/traces",
+		Batcher:  "jaeger",
+		Sampler:  1.0,
+	})
+	defer ztrace.StopAgent()
 
-	traceId := stringx.RandId()
-	req.Header.Set(trace.TraceIdKey, traceId)
+	for _, test := range []string{"", "bar"} {
+		t.Run(test, func(t *testing.T) {
+			h := chain.New(TracingHandler("foo", test)).Then(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+					spanCtx := trace.SpanContextFromContext(ctx)
+					assert.True(t, spanCtx.IsValid())
+				}))
+			ts := httptest.NewServer(h)
+			defer ts.Close()
 
-	handler := TracingHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span, ok := r.Context().Value(tracespec.TracingKey).(tracespec.Trace)
-		assert.True(t, ok)
-		assert.Equal(t, traceId, span.TraceId())
-	}))
+			client := ts.Client()
+			err := func(ctx context.Context) error {
+				ctx, span := otel.Tracer("httptrace/client").Start(ctx, "test")
+				defer span.End()
 
-	resp := httptest.NewRecorder()
-	handler.ServeHTTP(resp, req)
+				req, _ := http.NewRequest("GET", ts.URL, nil)
+				otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
-	assert.Equal(t, http.StatusOK, resp.Code)
-	assert.Equal(t, traceId, resp.Header().Get(trace.TraceIdKey))
+				res, err := client.Do(req)
+				assert.Nil(t, err)
+				return res.Body.Close()
+			}(context.Background())
+
+			assert.Nil(t, err)
+		})
+	}
 }

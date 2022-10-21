@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/tools/goctl/api/parser/g4/ast"
-	"github.com/tal-tech/go-zero/tools/goctl/api/parser/g4/gen/api"
+	"github.com/zeromicro/go-zero/tools/goctl/api/parser/g4/ast"
+	"github.com/zeromicro/go-zero/tools/goctl/api/parser/g4/gen/api"
 )
 
 func TestBody(t *testing.T) {
@@ -125,6 +125,14 @@ func TestRoute(t *testing.T) {
 			},
 		}))
 
+		v, err = parser.Accept(fn, `post /1/2a/3b/4`)
+		assert.Nil(t, err)
+		route = v.(*ast.Route)
+		assert.True(t, route.Equal(&ast.Route{
+			Method: ast.NewTextExpr("post"),
+			Path:   ast.NewTextExpr("/1/2a/3b/4"),
+		}))
+
 		v, err = parser.Accept(fn, `post /foo/foo-bar/:bar`)
 		assert.Nil(t, err)
 		route = v.(*ast.Route)
@@ -164,8 +172,8 @@ func TestRoute(t *testing.T) {
 		_, err = parser.Accept(fn, `post foo/bar`)
 		assert.Error(t, err)
 
-		_, err = parser.Accept(fn, `post /foo/bar return (Bar)`)
-		assert.Error(t, err)
+		_, err = parser.Accept(fn, `post /foo/bar returns (Bar)`)
+		assert.Nil(t, err)
 
 		_, err = parser.Accept(fn, ` /foo/bar returns (Bar)`)
 		assert.Error(t, err)
@@ -174,7 +182,7 @@ func TestRoute(t *testing.T) {
 		assert.Error(t, err)
 
 		_, err = parser.Accept(fn, ` post /foo/bar returns (int)`)
-		assert.Error(t, err)
+		assert.Nil(t, err)
 
 		_, err = parser.Accept(fn, ` post /foo/bar returns (*int)`)
 		assert.Error(t, err)

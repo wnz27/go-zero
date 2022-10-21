@@ -1,30 +1,28 @@
 package limit
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"time"
 
-	"github.com/tal-tech/go-zero/core/stores/redis"
+	"github.com/zeromicro/go-zero/core/stores/redis"
 )
 
-const (
-	// to be compatible with aliyun redis, we cannot use `local key = KEYS[1]` to reuse the key
-	periodScript = `local limit = tonumber(ARGV[1])
+// to be compatible with aliyun redis, we cannot use `local key = KEYS[1]` to reuse the key
+const periodScript = `local limit = tonumber(ARGV[1])
 local window = tonumber(ARGV[2])
 local current = redis.call("INCRBY", KEYS[1], 1)
 if current == 1 then
     redis.call("expire", KEYS[1], window)
-    return 1
-elseif current < limit then
+end
+if current < limit then
     return 1
 elseif current == limit then
     return 2
 else
     return 0
 end`
-	zoneDiff = 3600 * 8 // GMT+8 for our services
-)
 
 const (
 	// Unknown means not initialized state.
@@ -77,7 +75,12 @@ func NewPeriodLimit(period, quota int, limitStore *redis.Redis, keyPrefix string
 
 // Take requests a permit, it returns the permit state.
 func (h *PeriodLimit) Take(key string) (int, error) {
-	resp, err := h.limitStore.Eval(periodScript, []string{h.keyPrefix + key}, []string{
+	return h.TakeCtx(context.Background(), key)
+}
+
+// TakeCtx requests a permit with context, it returns the permit state.
+func (h *PeriodLimit) TakeCtx(ctx context.Context, key string) (int, error) {
+	resp, err := h.limitStore.EvalCtx(ctx, periodScript, []string{h.keyPrefix + key}, []string{
 		strconv.Itoa(h.quota),
 		strconv.Itoa(h.calcExpireSeconds()),
 	})
@@ -104,7 +107,9 @@ func (h *PeriodLimit) Take(key string) (int, error) {
 
 func (h *PeriodLimit) calcExpireSeconds() int {
 	if h.align {
-		unix := time.Now().Unix() + zoneDiff
+		now := time.Now()
+		_, offset := now.Zone()
+		unix := now.Unix() + int64(offset)
 		return h.period - int(unix%int64(h.period))
 	}
 
@@ -112,6 +117,8 @@ func (h *PeriodLimit) calcExpireSeconds() int {
 }
 
 // Align returns a func to customize a PeriodLimit with alignment.
+// For example, if we want to limit end users with 5 sms verification messages every day,
+// we need to align with the local timezone and the start of the day.
 func Align() PeriodOption {
 	return func(l *PeriodLimit) {
 		l.align = true

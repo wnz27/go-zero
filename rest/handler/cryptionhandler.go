@@ -6,12 +6,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 
-	"github.com/tal-tech/go-zero/core/codec"
-	"github.com/tal-tech/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/codec"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 const maxBytes = 1 << 20 // 1 MiB
@@ -51,7 +50,7 @@ func decryptBody(key []byte, r *http.Request) error {
 		content = make([]byte, r.ContentLength)
 		_, err = io.ReadFull(r.Body, content)
 	} else {
-		content, err = ioutil.ReadAll(io.LimitReader(r.Body, maxBytes))
+		content, err = io.ReadAll(io.LimitReader(r.Body, maxBytes))
 	}
 	if err != nil {
 		return err
@@ -69,7 +68,7 @@ func decryptBody(key []byte, r *http.Request) error {
 
 	var buf bytes.Buffer
 	buf.Write(output)
-	r.Body = ioutil.NopCloser(&buf)
+	r.Body = io.NopCloser(&buf)
 
 	return nil
 }

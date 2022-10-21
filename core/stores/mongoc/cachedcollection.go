@@ -2,18 +2,18 @@ package mongoc
 
 import (
 	"github.com/globalsign/mgo"
-	"github.com/tal-tech/go-zero/core/stores/cache"
-	"github.com/tal-tech/go-zero/core/stores/mongo"
-	"github.com/tal-tech/go-zero/core/syncx"
+	"github.com/zeromicro/go-zero/core/stores/cache"
+	"github.com/zeromicro/go-zero/core/stores/mongo"
+	"github.com/zeromicro/go-zero/core/syncx"
 )
 
 var (
 	// ErrNotFound is an alias of mgo.ErrNotFound.
 	ErrNotFound = mgo.ErrNotFound
 
-	// can't use one SharedCalls per conn, because multiple conns may share the same cache key.
-	sharedCalls = syncx.NewSharedCalls()
-	stats       = cache.NewStat("mongoc")
+	// can't use one SingleFlight per conn, because multiple conns may share the same cache key.
+	singleFlight = syncx.NewSingleFlight()
+	stats        = cache.NewStat("mongoc")
 )
 
 type (

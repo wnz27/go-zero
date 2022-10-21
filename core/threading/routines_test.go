@@ -1,12 +1,12 @@
 package threading
 
 import (
-	"io/ioutil"
+	"io"
 	"log"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/core/lang"
+	"github.com/zeromicro/go-zero/core/lang"
 )
 
 func TestRoutineId(t *testing.T) {
@@ -14,7 +14,7 @@ func TestRoutineId(t *testing.T) {
 }
 
 func TestRunSafe(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 
 	i := 0
 

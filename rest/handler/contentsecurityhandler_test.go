@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -18,8 +17,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/core/codec"
-	"github.com/tal-tech/go-zero/rest/httpx"
+	"github.com/zeromicro/go-zero/core/codec"
+	"github.com/zeromicro/go-zero/rest/httpx"
 )
 
 const timeDiff = time.Hour * 2 * 24
@@ -64,7 +63,7 @@ type requestSettings struct {
 }
 
 func init() {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 }
 
 func TestContentSecurityHandler(t *testing.T) {
@@ -275,8 +274,7 @@ func TestContentSecurityHandler_UnsignedCallback_WrongTime(t *testing.T) {
 		})
 	handler := contentSecurityHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
-	var reader io.Reader
-	reader = strings.NewReader("hello")
+	reader := strings.NewReader("hello")
 	setting := requestSettings{
 		method:      http.MethodPost,
 		url:         "http://localhost/a/b?c=d&e=f",
@@ -375,13 +373,13 @@ func buildRequest(rs requestSettings) (*http.Request, error) {
 }
 
 func createTempFile(body []byte) (string, error) {
-	tmpFile, err := ioutil.TempFile(os.TempDir(), "go-unit-*.tmp")
+	tmpFile, err := os.CreateTemp(os.TempDir(), "go-unit-*.tmp")
 	if err != nil {
 		return "", err
 	}
 
 	tmpFile.Close()
-	err = ioutil.WriteFile(tmpFile.Name(), body, os.ModePerm)
+	err = os.WriteFile(tmpFile.Name(), body, os.ModePerm)
 	if err != nil {
 		return "", err
 	}

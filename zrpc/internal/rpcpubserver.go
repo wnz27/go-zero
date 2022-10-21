@@ -4,8 +4,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tal-tech/go-zero/core/discov"
-	"github.com/tal-tech/go-zero/core/netx"
+	"github.com/zeromicro/go-zero/core/discov"
+	"github.com/zeromicro/go-zero/core/netx"
 )
 
 const (
@@ -14,10 +14,18 @@ const (
 )
 
 // NewRpcPubServer returns a Server.
-func NewRpcPubServer(etcdEndpoints []string, etcdKey, listenOn string, opts ...ServerOption) (Server, error) {
+func NewRpcPubServer(etcd discov.EtcdConf, listenOn string, opts ...ServerOption) (Server, error) {
 	registerEtcd := func() error {
 		pubListenOn := figureOutListenOn(listenOn)
-		pubClient := discov.NewPublisher(etcdEndpoints, etcdKey, pubListenOn)
+		var pubOpts []discov.PubOption
+		if etcd.HasAccount() {
+			pubOpts = append(pubOpts, discov.WithPubEtcdAccount(etcd.User, etcd.Pass))
+		}
+		if etcd.HasTLS() {
+			pubOpts = append(pubOpts, discov.WithPubEtcdTLS(etcd.CertFile, etcd.CertKeyFile,
+				etcd.CACertFile, etcd.InsecureSkipVerify))
+		}
+		pubClient := discov.NewPublisher(etcd.Hosts, etcd.Key, pubListenOn, pubOpts...)
 		return pubClient.KeepAlive()
 	}
 	server := keepAliveServer{
@@ -33,12 +41,12 @@ type keepAliveServer struct {
 	Server
 }
 
-func (ags keepAliveServer) Start(fn RegisterFn) error {
-	if err := ags.registerEtcd(); err != nil {
+func (s keepAliveServer) Start(fn RegisterFn) error {
+	if err := s.registerEtcd(); err != nil {
 		return err
 	}
 
-	return ags.Server.Start(fn)
+	return s.Server.Start(fn)
 }
 
 func figureOutListenOn(listenOn string) string {

@@ -2,9 +2,15 @@ package ast
 
 import (
 	"fmt"
+	"path"
 	"sort"
 
-	"github.com/tal-tech/go-zero/tools/goctl/api/parser/g4/gen/api"
+	"github.com/zeromicro/go-zero/tools/goctl/api/parser/g4/gen/api"
+)
+
+const (
+	prefixKey = "prefix"
+	groupKey  = "group"
 )
 
 // Api describes syntax for api
@@ -49,8 +55,19 @@ func (v *ApiVisitor) acceptService(root, final *Api) {
 		}
 		v.duplicateServerItemCheck(service)
 
+		var prefix, group string
+		if service.AtServer != nil {
+			p := service.AtServer.Kv.Get(prefixKey)
+			if p != nil {
+				prefix = p.Text()
+			}
+			g := service.AtServer.Kv.Get(groupKey)
+			if g != nil {
+				group = g.Text()
+			}
+		}
 		for _, route := range service.ServiceApi.ServiceRoute {
-			uniqueRoute := fmt.Sprintf("%s %s", route.Route.Method.Text(), route.Route.Path.Text())
+			uniqueRoute := fmt.Sprintf("%s %s", route.Route.Method.Text(), path.Join(prefix, route.Route.Path.Text()))
 			if _, ok := final.routeM[uniqueRoute]; ok {
 				v.panic(route.Route.Method, fmt.Sprintf("duplicate route '%s'", uniqueRoute))
 			}
@@ -82,10 +99,14 @@ func (v *ApiVisitor) acceptService(root, final *Api) {
 				v.panic(handlerExpr, "mismatched handler")
 			}
 
-			if _, ok := final.handlerM[handlerExpr.Text()]; ok {
+			handlerKey := handlerExpr.Text()
+			if len(group) > 0 {
+				handlerKey = fmt.Sprintf("%s/%s", group, handlerExpr.Text())
+			}
+			if _, ok := final.handlerM[handlerKey]; ok {
 				v.panic(handlerExpr, fmt.Sprintf("duplicate handler '%s'", handlerExpr.Text()))
 			}
-			final.handlerM[handlerExpr.Text()] = Holder
+			final.handlerM[handlerKey] = Holder
 		}
 		final.Service = append(final.Service, service)
 	}
@@ -189,7 +210,7 @@ func (a *Api) Format() error {
 
 // Equal compares whether the element literals in two Api are equal
 func (a *Api) Equal(v interface{}) bool {
-	if v == nil {
+	if v == nil || a == nil {
 		return false
 	}
 

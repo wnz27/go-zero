@@ -1,27 +1,28 @@
 package rest
 
 import (
+	"crypto/tls"
 	"log"
 	"net/http"
+	"path"
+	"time"
 
-	"github.com/tal-tech/go-zero/core/logx"
-	"github.com/tal-tech/go-zero/rest/handler"
-	"github.com/tal-tech/go-zero/rest/httpx"
-	"github.com/tal-tech/go-zero/rest/router"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/rest/chain"
+	"github.com/zeromicro/go-zero/rest/handler"
+	"github.com/zeromicro/go-zero/rest/httpx"
+	"github.com/zeromicro/go-zero/rest/internal/cors"
+	"github.com/zeromicro/go-zero/rest/router"
 )
 
 type (
-	runOptions struct {
-		start func(*engine) error
-	}
-
 	// RunOption defines the method to customize a Server.
 	RunOption func(*Server)
 
 	// A Server is a http server.
 	Server struct {
-		ngin *engine
-		opts runOptions
+		ngin   *engine
+		router httpx.Router
 	}
 )
 
@@ -45,14 +46,11 @@ func NewServer(c RestConf, opts ...RunOption) (*Server, error) {
 	}
 
 	server := &Server{
-		ngin: newEngine(c),
-		opts: runOptions{
-			start: func(srv *engine) error {
-				return srv.Start()
-			},
-		},
+		ngin:   newEngine(c),
+		router: router.NewRouter(),
 	}
 
+	opts = append([]RunOption{WithNotFoundHandler(nil)}, opts...)
 	for _, opt := range opts {
 		opt(server)
 	}
@@ -68,7 +66,7 @@ func (s *Server) AddRoutes(rs []Route, opts ...RouteOption) {
 	for _, opt := range opts {
 		opt(&r)
 	}
-	s.ngin.AddRoutes(r)
+	s.ngin.addRoutes(r)
 }
 
 // AddRoute adds given route into the Server.
@@ -76,11 +74,27 @@ func (s *Server) AddRoute(r Route, opts ...RouteOption) {
 	s.AddRoutes([]Route{r}, opts...)
 }
 
+// PrintRoutes prints the added routes to stdout.
+func (s *Server) PrintRoutes() {
+	s.ngin.print()
+}
+
+// Routes returns the HTTP routers that registered in the server.
+func (s *Server) Routes() []Route {
+	var routes []Route
+
+	for _, r := range s.ngin.routes {
+		routes = append(routes, r.routes...)
+	}
+
+	return routes
+}
+
 // Start starts the Server.
 // Graceful shutdown is enabled by default.
 // Use proc.SetTimeToForceQuit to customize the graceful shutdown period.
 func (s *Server) Start() {
-	handleError(s.opts.start(s.ngin))
+	handleError(s.ngin.start(s.router))
 }
 
 // Stop stops the Server.
@@ -97,6 +111,32 @@ func (s *Server) Use(middleware Middleware) {
 func ToMiddleware(handler func(next http.Handler) http.Handler) Middleware {
 	return func(handle http.HandlerFunc) http.HandlerFunc {
 		return handler(handle).ServeHTTP
+	}
+}
+
+// WithChain returns a RunOption that uses the given chain to replace the default chain.
+// JWT auth middleware and the middlewares that added by svr.Use() will be appended.
+func WithChain(chn chain.Chain) RunOption {
+	return func(svr *Server) {
+		svr.ngin.chain = chn
+	}
+}
+
+// WithCors returns a func to enable CORS for given origin, or default to all origins (*).
+func WithCors(origin ...string) RunOption {
+	return func(server *Server) {
+		server.router.SetNotAllowedHandler(cors.NotAllowedHandler(nil, origin...))
+		server.router = newCorsRouter(server.router, nil, origin...)
+	}
+}
+
+// WithCustomCors returns a func to enable CORS for given origin, or default to all origins (*),
+// fn lets caller customizing the response.
+func WithCustomCors(middlewareFn func(header http.Header), notAllowedFn func(http.ResponseWriter),
+	origin ...string) RunOption {
+	return func(server *Server) {
+		server.router.SetNotAllowedHandler(cors.NotAllowedHandler(notAllowedFn, origin...))
+		server.router = newCorsRouter(server.router, middlewareFn, origin...)
 	}
 }
 
@@ -119,6 +159,13 @@ func WithJwtTransition(secret, prevSecret string) RouteOption {
 		r.jwt.enabled = true
 		r.jwt.secret = secret
 		r.jwt.prevSecret = prevSecret
+	}
+}
+
+// WithMaxBytes returns a RouteOption to set maxBytes with the given value.
+func WithMaxBytes(maxBytes int64) RouteOption {
+	return func(r *featuredRoutes) {
+		r.maxBytes = maxBytes
 	}
 }
 
@@ -148,16 +195,33 @@ func WithMiddleware(middleware Middleware, rs ...Route) []Route {
 
 // WithNotFoundHandler returns a RunOption with not found handler set to given handler.
 func WithNotFoundHandler(handler http.Handler) RunOption {
-	rt := router.NewRouter()
-	rt.SetNotFoundHandler(handler)
-	return WithRouter(rt)
+	return func(server *Server) {
+		notFoundHandler := server.ngin.notFoundHandler(handler)
+		server.router.SetNotFoundHandler(notFoundHandler)
+	}
 }
 
 // WithNotAllowedHandler returns a RunOption with not allowed handler set to given handler.
 func WithNotAllowedHandler(handler http.Handler) RunOption {
-	rt := router.NewRouter()
-	rt.SetNotAllowedHandler(handler)
-	return WithRouter(rt)
+	return func(server *Server) {
+		server.router.SetNotAllowedHandler(handler)
+	}
+}
+
+// WithPrefix adds group as a prefix to the route paths.
+func WithPrefix(group string) RouteOption {
+	return func(r *featuredRoutes) {
+		var routes []Route
+		for _, rt := range r.routes {
+			p := path.Join(group, rt.Path)
+			routes = append(routes, Route{
+				Method:  rt.Method,
+				Path:    p,
+				Handler: rt.Handler,
+			})
+		}
+		r.routes = routes
+	}
 }
 
 // WithPriority returns a RunOption with priority.
@@ -170,9 +234,7 @@ func WithPriority() RouteOption {
 // WithRouter returns a RunOption that make server run with given router.
 func WithRouter(router httpx.Router) RunOption {
 	return func(server *Server) {
-		server.opts.start = func(srv *engine) error {
-			return srv.StartWithRouter(router)
-		}
+		server.router = router
 	}
 }
 
@@ -186,17 +248,31 @@ func WithSignature(signature SignatureConf) RouteOption {
 	}
 }
 
+// WithTimeout returns a RouteOption to set timeout with given value.
+func WithTimeout(timeout time.Duration) RouteOption {
+	return func(r *featuredRoutes) {
+		r.timeout = timeout
+	}
+}
+
+// WithTLSConfig returns a RunOption that with given tls config.
+func WithTLSConfig(cfg *tls.Config) RunOption {
+	return func(svr *Server) {
+		svr.ngin.setTlsConfig(cfg)
+	}
+}
+
 // WithUnauthorizedCallback returns a RunOption that with given unauthorized callback set.
 func WithUnauthorizedCallback(callback handler.UnauthorizedCallback) RunOption {
-	return func(engine *Server) {
-		engine.ngin.SetUnauthorizedCallback(callback)
+	return func(svr *Server) {
+		svr.ngin.setUnauthorizedCallback(callback)
 	}
 }
 
 // WithUnsignedCallback returns a RunOption that with given unsigned callback set.
 func WithUnsignedCallback(callback handler.UnsignedCallback) RunOption {
-	return func(engine *Server) {
-		engine.ngin.SetUnsignedCallback(callback)
+	return func(svr *Server) {
+		svr.ngin.setUnsignedCallback(callback)
 	}
 }
 
@@ -214,4 +290,20 @@ func validateSecret(secret string) {
 	if len(secret) < 8 {
 		panic("secret's length can't be less than 8")
 	}
+}
+
+type corsRouter struct {
+	httpx.Router
+	middleware Middleware
+}
+
+func newCorsRouter(router httpx.Router, headerFn func(http.Header), origins ...string) httpx.Router {
+	return &corsRouter{
+		Router:     router,
+		middleware: cors.Middleware(headerFn, origins...),
+	}
+}
+
+func (c *corsRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	c.middleware(c.Router.ServeHTTP)(w, r)
 }

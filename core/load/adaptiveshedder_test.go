@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/core/collection"
-	"github.com/tal-tech/go-zero/core/logx"
-	"github.com/tal-tech/go-zero/core/mathx"
-	"github.com/tal-tech/go-zero/core/stat"
-	"github.com/tal-tech/go-zero/core/syncx"
+	"github.com/zeromicro/go-zero/core/collection"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/mathx"
+	"github.com/zeromicro/go-zero/core/stat"
+	"github.com/zeromicro/go-zero/core/syncx"
+	"github.com/zeromicro/go-zero/core/timex"
 )
 
 const (
@@ -25,6 +26,7 @@ func init() {
 }
 
 func TestAdaptiveShedder(t *testing.T) {
+	DisableLog()
 	shedder := NewAdaptiveShedder(WithWindow(bucketDuration), WithBuckets(buckets), WithCpuThreshold(100))
 	var wg sync.WaitGroup
 	var drop int64
@@ -135,7 +137,7 @@ func TestAdaptiveShedderShouldDrop(t *testing.T) {
 		passCounter:     passCounter,
 		rtCounter:       rtCounter,
 		windows:         buckets,
-		dropTime:        syncx.NewAtomicDuration(),
+		overloadTime:    syncx.NewAtomicDuration(),
 		droppedRecently: syncx.NewAtomicBool(),
 	}
 	// cpu >=  800, inflight < maxPass
@@ -189,12 +191,15 @@ func TestAdaptiveShedderStillHot(t *testing.T) {
 		passCounter:     passCounter,
 		rtCounter:       rtCounter,
 		windows:         buckets,
-		dropTime:        syncx.NewAtomicDuration(),
+		overloadTime:    syncx.NewAtomicDuration(),
 		droppedRecently: syncx.ForAtomicBool(true),
 	}
 	assert.False(t, shedder.stillHot())
-	shedder.dropTime.Set(-coolOffDuration * 2)
+	shedder.overloadTime.Set(-coolOffDuration * 2)
 	assert.False(t, shedder.stillHot())
+	shedder.droppedRecently.Set(true)
+	shedder.overloadTime.Set(timex.Now())
+	assert.True(t, shedder.stillHot())
 }
 
 func BenchmarkAdaptiveShedder_Allow(b *testing.B) {

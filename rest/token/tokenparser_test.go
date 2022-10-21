@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/core/timex"
+	"github.com/zeromicro/go-zero/core/timex"
 )
 
 func TestTokenParser(t *testing.T) {
@@ -31,7 +31,7 @@ func TestTokenParser(t *testing.T) {
 	}
 
 	for _, pair := range keys {
-		req := httptest.NewRequest(http.MethodGet, "http://localhost", nil)
+		req := httptest.NewRequest(http.MethodGet, "http://localhost", http.NoBody)
 		token, err := buildToken(key, map[string]interface{}{
 			"key": "value",
 		}, 3600)
@@ -50,7 +50,7 @@ func TestTokenParser_Expired(t *testing.T) {
 		key     = "14F17379-EB8F-411B-8F12-6929002DCA76"
 		prevKey = "B63F477D-BBA3-4E52-96D3-C0034C27694A"
 	)
-	req := httptest.NewRequest(http.MethodGet, "http://localhost", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://localhost", http.NoBody)
 	token, err := buildToken(key, map[string]interface{}{
 		"key": "value",
 	}, 3600)

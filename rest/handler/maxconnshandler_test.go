@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -9,13 +9,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/core/lang"
+	"github.com/zeromicro/go-zero/core/lang"
 )
 
 const conns = 4
 
 func init() {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 }
 
 func TestMaxConnsHandler(t *testing.T) {
@@ -32,13 +32,13 @@ func TestMaxConnsHandler(t *testing.T) {
 
 	for i := 0; i < conns; i++ {
 		go func() {
-			req := httptest.NewRequest(http.MethodGet, "http://localhost", nil)
+			req := httptest.NewRequest(http.MethodGet, "http://localhost", http.NoBody)
 			handler.ServeHTTP(httptest.NewRecorder(), req)
 		}()
 	}
 
 	waitGroup.Wait()
-	req := httptest.NewRequest(http.MethodGet, "http://localhost", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://localhost", http.NoBody)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 	assert.Equal(t, http.StatusServiceUnavailable, resp.Code)
@@ -65,14 +65,14 @@ func TestWithoutMaxConnsHandler(t *testing.T) {
 
 	for i := 0; i < conns; i++ {
 		go func() {
-			req := httptest.NewRequest(http.MethodGet, "http://localhost", nil)
+			req := httptest.NewRequest(http.MethodGet, "http://localhost", http.NoBody)
 			req.Header.Set(key, value)
 			handler.ServeHTTP(httptest.NewRecorder(), req)
 		}()
 	}
 
 	waitGroup.Wait()
-	req := httptest.NewRequest(http.MethodGet, "http://localhost", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://localhost", http.NoBody)
 	resp := httptest.NewRecorder()
 	handler.ServeHTTP(resp, req)
 	assert.Equal(t, http.StatusOK, resp.Code)

@@ -4,10 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/tal-tech/go-zero/core/iox"
-	"github.com/tal-tech/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/iox"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 const (
@@ -20,11 +21,12 @@ var (
 	preTotal  uint64
 	quota     float64
 	cores     uint64
+	initOnce  sync.Once
 )
 
 // if /proc not present, ignore the cpu calculation, like wsl linux
-func init() {
-	cpus, err := perCpuUsage()
+func initialize() {
+	cpus, err := cpuSets()
 	if err != nil {
 		logx.Error(err)
 		return
@@ -69,10 +71,13 @@ func init() {
 
 // RefreshCpu refreshes cpu usage and returns.
 func RefreshCpu() uint64 {
+	initOnce.Do(initialize)
+
 	total, err := totalCpuUsage()
 	if err != nil {
 		return 0
 	}
+
 	system, err := systemCpuUsage()
 	if err != nil {
 		return 0
@@ -117,15 +122,6 @@ func cpuSets() ([]uint64, error) {
 	return cg.cpus()
 }
 
-func perCpuUsage() ([]uint64, error) {
-	cg, err := currentCgroup()
-	if err != nil {
-		return nil, err
-	}
-
-	return cg.acctUsagePerCpu()
-}
-
 func systemCpuUsage() (uint64, error) {
 	lines, err := iox.ReadTextLines("/proc/stat", iox.WithoutBlank())
 	if err != nil {
@@ -157,10 +153,10 @@ func systemCpuUsage() (uint64, error) {
 }
 
 func totalCpuUsage() (usage uint64, err error) {
-	var cg *cgroup
+	var cg cgroup
 	if cg, err = currentCgroup(); err != nil {
 		return
 	}
 
-	return cg.acctUsageAllCpus()
+	return cg.usageAllCpus()
 }

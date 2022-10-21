@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tal-tech/go-zero/core/contextx"
-	"github.com/tal-tech/go-zero/core/lang"
-	"github.com/tal-tech/go-zero/core/logx"
-	"github.com/tal-tech/go-zero/core/syncx"
-	"github.com/tal-tech/go-zero/core/threading"
+	"github.com/zeromicro/go-zero/core/contextx"
+	"github.com/zeromicro/go-zero/core/lang"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/syncx"
+	"github.com/zeromicro/go-zero/core/threading"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -37,25 +37,35 @@ func GetRegistry() *Registry {
 
 // GetConn returns an etcd client connection associated with given endpoints.
 func (r *Registry) GetConn(endpoints []string) (EtcdClient, error) {
-	return r.getCluster(endpoints).getClient()
+	c, _ := r.getCluster(endpoints)
+	return c.getClient()
 }
 
 // Monitor monitors the key on given etcd endpoints, notify with the given UpdateListener.
 func (r *Registry) Monitor(endpoints []string, key string, l UpdateListener) error {
-	return r.getCluster(endpoints).monitor(key, l)
+	c, exists := r.getCluster(endpoints)
+	// if exists, the existing values should be updated to the listener.
+	if exists {
+		kvs := c.getCurrent(key)
+		for _, kv := range kvs {
+			l.OnAdd(kv)
+		}
+	}
+
+	return c.monitor(key, l)
 }
 
-func (r *Registry) getCluster(endpoints []string) *cluster {
+func (r *Registry) getCluster(endpoints []string) (c *cluster, exists bool) {
 	clusterKey := getClusterKey(endpoints)
 	r.lock.Lock()
 	defer r.lock.Unlock()
-	c, ok := r.clusters[clusterKey]
-	if !ok {
+	c, exists = r.clusters[clusterKey]
+	if !exists {
 		c = newCluster(endpoints)
 		r.clusters[clusterKey] = c
 	}
 
-	return c
+	return
 }
 
 type cluster struct {
@@ -92,6 +102,21 @@ func (c *cluster) getClient() (EtcdClient, error) {
 	}
 
 	return val.(EtcdClient), nil
+}
+
+func (c *cluster) getCurrent(key string) []KV {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	var kvs []KV
+	for k, v := range c.values[key] {
+		kvs = append(kvs, KV{
+			Key: k,
+			Val: v,
+		})
+	}
+
+	return kvs
 }
 
 func (c *cluster) handleChanges(key string, kvs []KV) {
@@ -166,9 +191,11 @@ func (c *cluster) handleWatchEvents(key string, events []*clientv3.Event) {
 				})
 			}
 		case clientv3.EventTypeDelete:
+			c.lock.Lock()
 			if vals, ok := c.values[key]; ok {
 				delete(vals, string(ev.Kv.Key))
 			}
+			c.lock.Unlock()
 			for _, l := range listeners {
 				l.OnDelete(KV{
 					Key: string(ev.Kv.Key),
@@ -181,7 +208,7 @@ func (c *cluster) handleWatchEvents(key string, events []*clientv3.Event) {
 	}
 }
 
-func (c *cluster) load(cli EtcdClient, key string) {
+func (c *cluster) load(cli EtcdClient, key string) int64 {
 	var resp *clientv3.GetResponse
 	for {
 		var err error
@@ -197,16 +224,16 @@ func (c *cluster) load(cli EtcdClient, key string) {
 	}
 
 	var kvs []KV
-	c.lock.Lock()
 	for _, ev := range resp.Kvs {
 		kvs = append(kvs, KV{
 			Key: string(ev.Key),
 			Val: string(ev.Value),
 		})
 	}
-	c.lock.Unlock()
 
 	c.handleChanges(key, kvs)
+
+	return resp.Header.Revision
 }
 
 func (c *cluster) monitor(key string, l UpdateListener) error {
@@ -219,9 +246,9 @@ func (c *cluster) monitor(key string, l UpdateListener) error {
 		return err
 	}
 
-	c.load(cli, key)
+	rev := c.load(cli, key)
 	c.watchGroup.Run(func() {
-		c.watch(cli, key)
+		c.watch(cli, key, rev)
 	})
 
 	return nil
@@ -253,22 +280,29 @@ func (c *cluster) reload(cli EtcdClient) {
 	for _, key := range keys {
 		k := key
 		c.watchGroup.Run(func() {
-			c.load(cli, k)
-			c.watch(cli, k)
+			rev := c.load(cli, k)
+			c.watch(cli, k, rev)
 		})
 	}
 }
 
-func (c *cluster) watch(cli EtcdClient, key string) {
+func (c *cluster) watch(cli EtcdClient, key string, rev int64) {
 	for {
-		if c.watchStream(cli, key) {
+		if c.watchStream(cli, key, rev) {
 			return
 		}
 	}
 }
 
-func (c *cluster) watchStream(cli EtcdClient, key string) bool {
-	rch := cli.Watch(clientv3.WithRequireLeader(c.context(cli)), makeKeyPrefix(key), clientv3.WithPrefix())
+func (c *cluster) watchStream(cli EtcdClient, key string, rev int64) bool {
+	var rch clientv3.WatchChan
+	if rev != 0 {
+		rch = cli.Watch(clientv3.WithRequireLeader(c.context(cli)), makeKeyPrefix(key), clientv3.WithPrefix(),
+			clientv3.WithRev(rev+1))
+	} else {
+		rch = cli.Watch(clientv3.WithRequireLeader(c.context(cli)), makeKeyPrefix(key), clientv3.WithPrefix())
+	}
+
 	for {
 		select {
 		case wresp, ok := <-rch:
@@ -302,14 +336,24 @@ func (c *cluster) watchConnState(cli EtcdClient) {
 
 // DialClient dials an etcd cluster with given endpoints.
 func DialClient(endpoints []string) (EtcdClient, error) {
-	return clientv3.New(clientv3.Config{
+	cfg := clientv3.Config{
 		Endpoints:            endpoints,
 		AutoSyncInterval:     autoSyncInterval,
 		DialTimeout:          DialTimeout,
 		DialKeepAliveTime:    dialKeepAliveTime,
 		DialKeepAliveTimeout: DialTimeout,
 		RejectOldCluster:     true,
-	})
+		PermitWithoutStream:  true,
+	}
+	if account, ok := GetAccount(endpoints); ok {
+		cfg.Username = account.User
+		cfg.Password = account.Pass
+	}
+	if tlsCfg, ok := GetTLS(endpoints); ok {
+		cfg.TLS = tlsCfg
+	}
+
+	return clientv3.New(cfg)
 }
 
 func getClusterKey(endpoints []string) string {

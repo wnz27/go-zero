@@ -7,10 +7,11 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/core/contextx"
-	"github.com/tal-tech/go-zero/core/lang"
-	"github.com/tal-tech/go-zero/core/logx"
-	"github.com/tal-tech/go-zero/core/stringx"
+	"github.com/zeromicro/go-zero/core/contextx"
+	"github.com/zeromicro/go-zero/core/lang"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/stringx"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -33,9 +34,10 @@ func setMockClient(cli EtcdClient) func() {
 }
 
 func TestGetCluster(t *testing.T) {
-	c1 := GetRegistry().getCluster([]string{"first"})
-	c2 := GetRegistry().getCluster([]string{"second"})
-	c3 := GetRegistry().getCluster([]string{"first"})
+	AddAccount([]string{"first"}, "foo", "bar")
+	c1, _ := GetRegistry().getCluster([]string{"first"})
+	c2, _ := GetRegistry().getCluster([]string{"second"})
+	c3, _ := GetRegistry().getCluster([]string{"first"})
 	assert.Equal(t, c1, c3)
 	assert.NotEqual(t, c1, c2)
 }
@@ -111,6 +113,7 @@ func TestCluster_Load(t *testing.T) {
 	restore := setMockClient(cli)
 	defer restore()
 	cli.EXPECT().Get(gomock.Any(), "any/", gomock.Any()).Return(&clientv3.GetResponse{
+		Header: &etcdserverpb.ResponseHeader{},
 		Kvs: []*mvccpb.KeyValue{
 			{
 				Key:   []byte("hello"),
@@ -167,7 +170,7 @@ func TestCluster_Watch(t *testing.T) {
 			listener.EXPECT().OnDelete(gomock.Any()).Do(func(_ interface{}) {
 				wg.Done()
 			}).MaxTimes(1)
-			go c.watch(cli, "any")
+			go c.watch(cli, "any", 0)
 			ch <- clientv3.WatchResponse{
 				Events: []*clientv3.Event{
 					{
@@ -211,7 +214,7 @@ func TestClusterWatch_RespFailures(t *testing.T) {
 				ch <- resp
 				close(c.done)
 			}()
-			c.watch(cli, "any")
+			c.watch(cli, "any", 0)
 		})
 	}
 }
@@ -231,7 +234,7 @@ func TestClusterWatch_CloseChan(t *testing.T) {
 		close(ch)
 		close(c.done)
 	}()
-	c.watch(cli, "any")
+	c.watch(cli, "any", 0)
 }
 
 func TestValueOnlyContext(t *testing.T) {

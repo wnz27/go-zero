@@ -1,13 +1,18 @@
 package sqlx
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/tal-tech/go-zero/core/logx"
-	"github.com/tal-tech/go-zero/core/mapping"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/mapping"
 )
+
+var errUnbalancedEscape = errors.New("no char after escape char")
 
 func desensitize(datasource string) string {
 	// remove account
@@ -66,7 +71,7 @@ func format(query string, args ...interface{}) (string, error) {
 
 			writeValue(&b, args[argIndex])
 			argIndex++
-		case '$':
+		case ':', '$':
 			var j int
 			for j = i + 1; j < bytes; j++ {
 				char := query[j]
@@ -74,16 +79,18 @@ func format(query string, args ...interface{}) (string, error) {
 					break
 				}
 			}
+
 			if j > i+1 {
 				index, err := strconv.Atoi(query[i+1 : j])
 				if err != nil {
 					return "", err
 				}
 
-				// index starts from 1 for pg
+				// index starts from 1 for pg or oracle
 				if index > argIndex {
 					argIndex = index
 				}
+
 				index--
 				if index < 0 || numArgs <= index {
 					return "", fmt.Errorf("error: wrong index %d in sql", index)
@@ -91,6 +98,25 @@ func format(query string, args ...interface{}) (string, error) {
 
 				writeValue(&b, args[index])
 				i = j - 1
+			}
+		case '\'', '"', '`':
+			b.WriteByte(ch)
+
+			for j := i + 1; j < bytes; j++ {
+				cur := query[j]
+				b.WriteByte(cur)
+
+				if cur == '\\' {
+					j++
+					if j >= bytes {
+						return "", errUnbalancedEscape
+					}
+
+					b.WriteByte(query[j])
+				} else if cur == ch {
+					i = j
+					break
+				}
 			}
 		default:
 			b.WriteByte(ch)
@@ -109,9 +135,9 @@ func logInstanceError(datasource string, err error) {
 	logx.Errorf("Error on getting sql instance of %s: %v", datasource, err)
 }
 
-func logSqlError(stmt string, err error) {
+func logSqlError(ctx context.Context, stmt string, err error) {
 	if err != nil && err != ErrNotFound {
-		logx.Errorf("stmt: %s, error: %s", stmt, err.Error())
+		logx.WithContext(ctx).Errorf("stmt: %s, error: %s", stmt, err.Error())
 	}
 }
 
@@ -126,6 +152,14 @@ func writeValue(buf *strings.Builder, arg interface{}) {
 	case string:
 		buf.WriteByte('\'')
 		buf.WriteString(escape(v))
+		buf.WriteByte('\'')
+	case time.Time:
+		buf.WriteByte('\'')
+		buf.WriteString(v.String())
+		buf.WriteByte('\'')
+	case *time.Time:
+		buf.WriteByte('\'')
+		buf.WriteString(v.String())
 		buf.WriteByte('\'')
 	default:
 		buf.WriteString(mapping.Repr(v))

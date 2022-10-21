@@ -3,10 +3,11 @@ package internal
 import (
 	"net"
 
-	"github.com/tal-tech/go-zero/core/proc"
-	"github.com/tal-tech/go-zero/core/stat"
-	"github.com/tal-tech/go-zero/zrpc/internal/serverinterceptors"
+	"github.com/zeromicro/go-zero/core/proc"
+	"github.com/zeromicro/go-zero/core/stat"
+	"github.com/zeromicro/go-zero/zrpc/internal/serverinterceptors"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
 type (
@@ -15,6 +16,7 @@ type (
 
 	rpcServerOptions struct {
 		metrics *stat.Metrics
+		health  bool
 	}
 
 	rpcServer struct {
@@ -22,10 +24,6 @@ type (
 		*baseRpcServer
 	}
 )
-
-func init() {
-	InitLogger()
-}
 
 // NewRpcServer returns a Server.
 func NewRpcServer(address string, opts ...ServerOption) Server {
@@ -38,7 +36,7 @@ func NewRpcServer(address string, opts ...ServerOption) Server {
 	}
 
 	return &rpcServer{
-		baseRpcServer: newBaseRpcServer(address, options.metrics),
+		baseRpcServer: newBaseRpcServer(address, &options),
 	}
 }
 
@@ -54,14 +52,15 @@ func (s *rpcServer) Start(register RegisterFn) error {
 	}
 
 	unaryInterceptors := []grpc.UnaryServerInterceptor{
-		serverinterceptors.UnaryTracingInterceptor(s.name),
-		serverinterceptors.UnaryCrashInterceptor(),
+		serverinterceptors.UnaryTracingInterceptor,
+		serverinterceptors.UnaryCrashInterceptor,
 		serverinterceptors.UnaryStatInterceptor(s.metrics),
-		serverinterceptors.UnaryPrometheusInterceptor(),
-		serverinterceptors.UnaryBreakerInterceptor(),
+		serverinterceptors.UnaryPrometheusInterceptor,
+		serverinterceptors.UnaryBreakerInterceptor,
 	}
 	unaryInterceptors = append(unaryInterceptors, s.unaryInterceptors...)
 	streamInterceptors := []grpc.StreamServerInterceptor{
+		serverinterceptors.StreamTracingInterceptor,
 		serverinterceptors.StreamCrashInterceptor,
 		serverinterceptors.StreamBreakerInterceptor,
 	}
@@ -70,9 +69,19 @@ func (s *rpcServer) Start(register RegisterFn) error {
 		WithStreamServerInterceptors(streamInterceptors...))
 	server := grpc.NewServer(options...)
 	register(server)
-	// we need to make sure all others are wrapped up
+
+	// register the health check service
+	if s.health != nil {
+		grpc_health_v1.RegisterHealthServer(server, s.health)
+		s.health.Resume()
+	}
+
+	// we need to make sure all others are wrapped up,
 	// so we do graceful stop at shutdown phase instead of wrap up phase
 	waitForCalled := proc.AddWrapUpListener(func() {
+		if s.health != nil {
+			s.health.Shutdown()
+		}
 		server.GracefulStop()
 	})
 	defer waitForCalled()
@@ -84,5 +93,12 @@ func (s *rpcServer) Start(register RegisterFn) error {
 func WithMetrics(metrics *stat.Metrics) ServerOption {
 	return func(options *rpcServerOptions) {
 		options.metrics = metrics
+	}
+}
+
+// WithRpcHealth returns a func that sets rpc health switch to a Server.
+func WithRpcHealth(health bool) ServerOption {
+	return func(options *rpcServerOptions) {
+		options.health = health
 	}
 }

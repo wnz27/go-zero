@@ -10,14 +10,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/rest/httpx"
-	"github.com/tal-tech/go-zero/rest/pathvar"
+	"github.com/zeromicro/go-zero/rest/httpx"
+	"github.com/zeromicro/go-zero/rest/internal/header"
+	"github.com/zeromicro/go-zero/rest/pathvar"
 )
 
-const (
-	applicationJsonWithUtf8 = "application/json; charset=utf-8"
-	contentLength           = "Content-Length"
-)
+const contentLength = "Content-Length"
 
 type mockedResponseWriter struct {
 	code int
@@ -49,7 +47,7 @@ func TestPatRouterHandleErrors(t *testing.T) {
 		t.Run(test.method, func(t *testing.T) {
 			router := NewRouter()
 			err := router.Handle(test.method, test.path, nil)
-			assert.Error(t, ErrInvalidMethod, err)
+			assert.Equal(t, test.err, err)
 		})
 	}
 }
@@ -105,19 +103,22 @@ func TestPatRouter(t *testing.T) {
 		t.Run(test.method+":"+test.path, func(t *testing.T) {
 			routed := false
 			router := NewRouter()
-			err := router.Handle(test.method, "/a/:b", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				routed = true
-				assert.Equal(t, 1, len(pathvar.Vars(r)))
-			}))
+			err := router.Handle(test.method, "/a/:b", http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) {
+					routed = true
+					assert.Equal(t, 1, len(pathvar.Vars(r)))
+				}))
 			assert.Nil(t, err)
-			err = router.Handle(test.method, "/a/b/c", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				routed = true
-				assert.Nil(t, pathvar.Vars(r))
-			}))
+			err = router.Handle(test.method, "/a/b/c", http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) {
+					routed = true
+					assert.Nil(t, pathvar.Vars(r))
+				}))
 			assert.Nil(t, err)
-			err = router.Handle(test.method, "/b/c", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				routed = true
-			}))
+			err = router.Handle(test.method, "/b/c", http.HandlerFunc(
+				func(w http.ResponseWriter, r *http.Request) {
+					routed = true
+				}))
 			assert.Nil(t, err)
 
 			w := new(mockedResponseWriter)
@@ -164,7 +165,7 @@ func TestParseJsonPost(t *testing.T) {
 	r, err := http.NewRequest(http.MethodPost, "http://hello.com/kevin/2017?nickname=whatever&zipcode=200000",
 		bytes.NewBufferString(`{"location": "shanghai", "time": 20170912}`))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, httpx.ApplicationJson)
+	r.Header.Set(httpx.ContentType, httpx.JsonContentType)
 
 	router := NewRouter()
 	err = router.Handle(http.MethodPost, "/:name/:year", http.HandlerFunc(func(
@@ -196,7 +197,7 @@ func TestParseJsonPostWithIntSlice(t *testing.T) {
 	r, err := http.NewRequest(http.MethodPost, "http://hello.com/kevin/2017",
 		bytes.NewBufferString(`{"ages": [1, 2], "years": [3, 4]}`))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, httpx.ApplicationJson)
+	r.Header.Set(httpx.ContentType, httpx.JsonContentType)
 
 	router := NewRouter()
 	err = router.Handle(http.MethodPost, "/:name/:year", http.HandlerFunc(func(
@@ -224,7 +225,7 @@ func TestParseJsonPostError(t *testing.T) {
 	r, err := http.NewRequest(http.MethodPost, "http://hello.com/kevin/2017?nickname=whatever&zipcode=200000",
 		bytes.NewBufferString(payload))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, httpx.ApplicationJson)
+	r.Header.Set(httpx.ContentType, httpx.JsonContentType)
 
 	router := NewRouter()
 	err = router.Handle(http.MethodPost, "/:name/:year", http.HandlerFunc(
@@ -252,7 +253,7 @@ func TestParseJsonPostInvalidRequest(t *testing.T) {
 	r, err := http.NewRequest(http.MethodPost, "http://hello.com/",
 		bytes.NewBufferString(payload))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, httpx.ApplicationJson)
+	r.Header.Set(httpx.ContentType, httpx.JsonContentType)
 
 	router := NewRouter()
 	err = router.Handle(http.MethodPost, "/", http.HandlerFunc(
@@ -274,7 +275,7 @@ func TestParseJsonPostRequired(t *testing.T) {
 	r, err := http.NewRequest(http.MethodPost, "http://hello.com/kevin/2017",
 		bytes.NewBufferString(`{"location": "shanghai"`))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, httpx.ApplicationJson)
+	r.Header.Set(httpx.ContentType, httpx.JsonContentType)
 
 	router := NewRouter()
 	err = router.Handle(http.MethodPost, "/:name/:year", http.HandlerFunc(
@@ -452,7 +453,7 @@ func TestParsePtrInRequest(t *testing.T) {
 	r, err := http.NewRequest(http.MethodPost, "http://hello.com/kevin/2017",
 		bytes.NewBufferString(`{"audio": {"volume": 100}}`))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, httpx.ApplicationJson)
+	r.Header.Set(httpx.ContentType, httpx.JsonContentType)
 
 	type (
 		Request struct {
@@ -598,9 +599,9 @@ func TestParseWrappedRequest(t *testing.T) {
 }
 
 func TestParseWrappedGetRequestWithJsonHeader(t *testing.T) {
-	r, err := http.NewRequest(http.MethodGet, "http://hello.com/kevin/2017", nil)
+	r, err := http.NewRequest(http.MethodGet, "http://hello.com/kevin/2017", bytes.NewReader(nil))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, applicationJsonWithUtf8)
+	r.Header.Set(httpx.ContentType, header.JsonContentType)
 
 	type (
 		Request struct {
@@ -631,9 +632,9 @@ func TestParseWrappedGetRequestWithJsonHeader(t *testing.T) {
 }
 
 func TestParseWrappedHeadRequestWithJsonHeader(t *testing.T) {
-	r, err := http.NewRequest(http.MethodHead, "http://hello.com/kevin/2017", nil)
+	r, err := http.NewRequest(http.MethodHead, "http://hello.com/kevin/2017", bytes.NewReader(nil))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, applicationJsonWithUtf8)
+	r.Header.Set(httpx.ContentType, header.JsonContentType)
 
 	type (
 		Request struct {
@@ -699,7 +700,7 @@ func TestParseWithAll(t *testing.T) {
 	r, err := http.NewRequest(http.MethodPost, "http://hello.com/kevin/2017?nickname=whatever&zipcode=200000",
 		bytes.NewBufferString(`{"location": "shanghai", "time": 20170912}`))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, httpx.ApplicationJson)
+	r.Header.Set(httpx.ContentType, httpx.JsonContentType)
 
 	router := NewRouter()
 	err = router.Handle(http.MethodPost, "/:name/:year", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -730,7 +731,7 @@ func TestParseWithAllUtf8(t *testing.T) {
 	r, err := http.NewRequest(http.MethodPost, "http://hello.com/kevin/2017?nickname=whatever&zipcode=200000",
 		bytes.NewBufferString(`{"location": "shanghai", "time": 20170912}`))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, applicationJsonWithUtf8)
+	r.Header.Set(httpx.ContentType, header.JsonContentType)
 
 	router := NewRouter()
 	err = router.Handle(http.MethodPost, "/:name/:year", http.HandlerFunc(
@@ -920,7 +921,7 @@ func TestParseWithMissingAllPaths(t *testing.T) {
 func TestParseGetWithContentLengthHeader(t *testing.T) {
 	r, err := http.NewRequest(http.MethodGet, "http://hello.com/kevin/2017?nickname=whatever&zipcode=200000", nil)
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, httpx.ApplicationJson)
+	r.Header.Set(httpx.ContentType, header.JsonContentType)
 	r.Header.Set(contentLength, "1024")
 
 	router := NewRouter()
@@ -948,7 +949,7 @@ func TestParseJsonPostWithTypeMismatch(t *testing.T) {
 	r, err := http.NewRequest(http.MethodPost, "http://hello.com/kevin/2017?nickname=whatever&zipcode=200000",
 		bytes.NewBufferString(`{"time": "20170912"}`))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, applicationJsonWithUtf8)
+	r.Header.Set(httpx.ContentType, header.JsonContentType)
 
 	router := NewRouter()
 	err = router.Handle(http.MethodPost, "/:name/:year", http.HandlerFunc(
@@ -974,7 +975,7 @@ func TestParseJsonPostWithInt2String(t *testing.T) {
 	r, err := http.NewRequest(http.MethodPost, "http://hello.com/kevin/2017",
 		bytes.NewBufferString(`{"time": 20170912}`))
 	assert.Nil(t, err)
-	r.Header.Set(httpx.ContentType, applicationJsonWithUtf8)
+	r.Header.Set(httpx.ContentType, header.JsonContentType)
 
 	router := NewRouter()
 	err = router.Handle(http.MethodPost, "/:name/:year", http.HandlerFunc(

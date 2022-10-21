@@ -3,17 +3,15 @@ package gogen
 import (
 	"bytes"
 	"fmt"
-	goformat "go/format"
 	"io"
-	"path/filepath"
 	"strings"
 	"text/template"
 
-	"github.com/tal-tech/go-zero/core/collection"
-	"github.com/tal-tech/go-zero/tools/goctl/api/spec"
-	"github.com/tal-tech/go-zero/tools/goctl/api/util"
-	ctlutil "github.com/tal-tech/go-zero/tools/goctl/util"
-	"github.com/tal-tech/go-zero/tools/goctl/util/ctx"
+	"github.com/zeromicro/go-zero/core/collection"
+	"github.com/zeromicro/go-zero/tools/goctl/api/spec"
+	"github.com/zeromicro/go-zero/tools/goctl/api/util"
+	"github.com/zeromicro/go-zero/tools/goctl/pkg/golang"
+	"github.com/zeromicro/go-zero/tools/goctl/util/pathx"
 )
 
 type fileGenConfig struct {
@@ -41,7 +39,7 @@ func genFile(c fileGenConfig) error {
 	if len(c.category) == 0 || len(c.templateFile) == 0 {
 		text = c.builtinTemplate
 	} else {
-		text, err = ctlutil.LoadTemplate(c.category, c.templateFile, c.builtinTemplate)
+		text, err = pathx.LoadTemplate(c.category, c.templateFile, c.builtinTemplate)
 		if err != nil {
 			return err
 		}
@@ -54,23 +52,9 @@ func genFile(c fileGenConfig) error {
 		return err
 	}
 
-	code := formatCode(buffer.String())
+	code := golang.FormatCode(buffer.String())
 	_, err = fp.WriteString(code)
 	return err
-}
-
-func getParentPackage(dir string) (string, error) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", err
-	}
-
-	projectCtx, err := ctx.Prepare(abs)
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.ToSlash(filepath.Join(projectCtx.Path, strings.TrimPrefix(projectCtx.WorkDir, projectCtx.Dir))), nil
 }
 
 func writeProperty(writer io.Writer, name, tag, comment string, tp spec.Type, indent int) error {
@@ -98,6 +82,17 @@ func getAuths(api *spec.ApiSpec) []string {
 	return authNames.KeysStr()
 }
 
+func getJwtTrans(api *spec.ApiSpec) []string {
+	jwtTransList := collection.NewSet()
+	for _, g := range api.Service.Groups {
+		jt := g.GetAnnotation(jwtTransKey)
+		if len(jt) > 0 {
+			jwtTransList.Add(jt)
+		}
+	}
+	return jwtTransList.KeysStr()
+}
+
 func getMiddleware(api *spec.ApiSpec) []string {
 	result := collection.NewSet()
 	for _, g := range api.Service.Groups {
@@ -110,15 +105,6 @@ func getMiddleware(api *spec.ApiSpec) []string {
 	}
 
 	return result.KeysStr()
-}
-
-func formatCode(code string) string {
-	ret, err := goformat.Source([]byte(code))
-	if err != nil {
-		return code
-	}
-
-	return string(ret)
 }
 
 func responseGoTypeName(r spec.Route, pkg ...string) string {

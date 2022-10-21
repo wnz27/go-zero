@@ -1,6 +1,9 @@
 package rest
 
-import "net/http"
+import (
+	"net/http"
+	"time"
+)
 
 type (
 	// Middleware defines the middleware method.
@@ -28,9 +31,11 @@ type (
 	}
 
 	featuredRoutes struct {
+		timeout   time.Duration
 		priority  bool
 		jwt       jwtSetting
 		signature signatureSetting
 		routes    []Route
+		maxBytes  int64
 	}
 )

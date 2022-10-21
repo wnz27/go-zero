@@ -6,9 +6,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tal-tech/go-zero/core/logx"
-	"github.com/tal-tech/go-zero/core/mathx"
-	"github.com/tal-tech/go-zero/core/syncx"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/mathx"
+	"github.com/zeromicro/go-zero/core/syncx"
 )
 
 const (
@@ -26,7 +26,7 @@ type (
 	// CacheOption defines the method to customize a Cache.
 	CacheOption func(cache *Cache)
 
-	// A Cache object is a in-memory cache.
+	// A Cache object is an in-memory cache.
 	Cache struct {
 		name           string
 		lock           sync.Mutex
@@ -34,7 +34,7 @@ type (
 		expire         time.Duration
 		timingWheel    *TimingWheel
 		lruCache       lru
-		barrier        syncx.SharedCalls
+		barrier        syncx.SingleFlight
 		unstableExpiry mathx.Unstable
 		stats          *cacheStat
 	}
@@ -46,7 +46,7 @@ func NewCache(expire time.Duration, opts ...CacheOption) (*Cache, error) {
 		data:           make(map[string]interface{}),
 		expire:         expire,
 		lruCache:       emptyLruCache,
-		barrier:        syncx.NewSharedCalls(),
+		barrier:        syncx.NewSingleFlight(),
 		unstableExpiry: mathx.NewUnstable(expiryDeviation),
 	}
 
@@ -98,13 +98,18 @@ func (c *Cache) Get(key string) (interface{}, bool) {
 
 // Set sets value into c with key.
 func (c *Cache) Set(key string, value interface{}) {
+	c.SetWithExpire(key, value, c.expire)
+}
+
+// SetWithExpire sets value into c with key and expire with the given value.
+func (c *Cache) SetWithExpire(key string, value interface{}, expire time.Duration) {
 	c.lock.Lock()
 	_, ok := c.data[key]
 	c.data[key] = value
 	c.lruCache.add(key)
 	c.lock.Unlock()
 
-	expiry := c.unstableExpiry.AroundDuration(c.expire)
+	expiry := c.unstableExpiry.AroundDuration(expire)
 	if ok {
 		c.timingWheel.MoveTimer(key, expiry)
 	} else {

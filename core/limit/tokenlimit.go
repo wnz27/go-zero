@@ -1,14 +1,16 @@
 package limit
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/tal-tech/go-zero/core/logx"
-	"github.com/tal-tech/go-zero/core/stores/redis"
+	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/stores/redis"
 	xrate "golang.org/x/time/rate"
 )
 
@@ -58,8 +60,8 @@ type TokenLimiter struct {
 	timestampKey   string
 	rescueLock     sync.Mutex
 	redisAlive     uint32
-	rescueLimiter  *xrate.Limiter
 	monitorStarted bool
+	rescueLimiter  *xrate.Limiter
 }
 
 // NewTokenLimiter returns a new TokenLimiter that allows events up to rate and permits
@@ -84,19 +86,31 @@ func (lim *TokenLimiter) Allow() bool {
 	return lim.AllowN(time.Now(), 1)
 }
 
-// AllowN reports whether n events may happen at time now.
-// Use this method if you intend to drop / skip events that exceed the rate rate.
-// Otherwise use Reserve or Wait.
-func (lim *TokenLimiter) AllowN(now time.Time, n int) bool {
-	return lim.reserveN(now, n)
+// AllowCtx is shorthand for AllowNCtx(ctx,time.Now(), 1) with incoming context.
+func (lim *TokenLimiter) AllowCtx(ctx context.Context) bool {
+	return lim.AllowNCtx(ctx, time.Now(), 1)
 }
 
-func (lim *TokenLimiter) reserveN(now time.Time, n int) bool {
+// AllowN reports whether n events may happen at time now.
+// Use this method if you intend to drop / skip events that exceed the rate.
+// Otherwise, use Reserve or Wait.
+func (lim *TokenLimiter) AllowN(now time.Time, n int) bool {
+	return lim.reserveN(context.Background(), now, n)
+}
+
+// AllowNCtx reports whether n events may happen at time now with incoming context.
+// Use this method if you intend to drop / skip events that exceed the rate.
+// Otherwise, use Reserve or Wait.
+func (lim *TokenLimiter) AllowNCtx(ctx context.Context, now time.Time, n int) bool {
+	return lim.reserveN(ctx, now, n)
+}
+
+func (lim *TokenLimiter) reserveN(ctx context.Context, now time.Time, n int) bool {
 	if atomic.LoadUint32(&lim.redisAlive) == 0 {
 		return lim.rescueLimiter.AllowN(now, n)
 	}
 
-	resp, err := lim.store.Eval(
+	resp, err := lim.store.EvalCtx(ctx,
 		script,
 		[]string{
 			lim.tokenKey,
@@ -112,7 +126,12 @@ func (lim *TokenLimiter) reserveN(now time.Time, n int) bool {
 	// Lua boolean false -> r Nil bulk reply
 	if err == redis.Nil {
 		return false
-	} else if err != nil {
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		logx.Errorf("fail to use rate limiter: %s", err)
+		return false
+	}
+	if err != nil {
 		logx.Errorf("fail to use rate limiter: %s, use in-process limiter for rescue", err)
 		lim.startMonitor()
 		return lim.rescueLimiter.AllowN(now, n)

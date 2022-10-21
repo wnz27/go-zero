@@ -7,7 +7,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 const mockedDatasource = "sqlmock"
@@ -17,16 +17,20 @@ func init() {
 }
 
 func TestSqlConn(t *testing.T) {
-	mock := buildConn()
+	mock, err := buildConn()
+	assert.Nil(t, err)
 	mock.ExpectExec("any")
 	mock.ExpectQuery("any").WillReturnRows(sqlmock.NewRows([]string{"foo"}))
 	conn := NewMysql(mockedDatasource)
+	db, err := conn.RawDB()
+	assert.Nil(t, err)
+	rawConn := NewSqlConnFromDB(db, withMysqlAcceptable())
 	badConn := NewMysql("badsql")
-	_, err := conn.Exec("any", "value")
+	_, err = conn.Exec("any", "value")
 	assert.NotNil(t, err)
 	_, err = badConn.Exec("any", "value")
 	assert.NotNil(t, err)
-	_, err = conn.Prepare("any")
+	_, err = rawConn.Prepare("any")
 	assert.NotNil(t, err)
 	_, err = badConn.Prepare("any")
 	assert.NotNil(t, err)
@@ -47,8 +51,8 @@ func TestSqlConn(t *testing.T) {
 	}))
 }
 
-func buildConn() (mock sqlmock.Sqlmock) {
-	connManager.GetResource(mockedDatasource, func() (io.Closer, error) {
+func buildConn() (mock sqlmock.Sqlmock, err error) {
+	_, err = connManager.GetResource(mockedDatasource, func() (io.Closer, error) {
 		var db *sql.DB
 		var err error
 		db, mock, err = sqlmock.New()

@@ -10,17 +10,23 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tal-tech/go-zero/core/stringx"
+	"github.com/zeromicro/go-zero/core/stringx"
 )
 
 const (
-	defaultOption   = "default"
-	stringOption    = "string"
-	optionalOption  = "optional"
-	optionsOption   = "options"
-	rangeOption     = "range"
-	optionSeparator = "|"
-	equalToken      = "="
+	defaultOption      = "default"
+	stringOption       = "string"
+	optionalOption     = "optional"
+	optionsOption      = "options"
+	rangeOption        = "range"
+	optionSeparator    = "|"
+	equalToken         = "="
+	escapeChar         = '\\'
+	leftBracket        = '('
+	rightBracket       = ')'
+	leftSquareBracket  = '['
+	rightSquareBracket = ']'
+	segmentSeparator   = ','
 )
 
 var (
@@ -118,7 +124,7 @@ func convertType(kind reflect.Kind, str string) (interface{}, error) {
 }
 
 func doParseKeyAndOptions(field reflect.StructField, value string) (string, *fieldOptions, error) {
-	segments := strings.Split(value, ",")
+	segments := parseSegments(value)
 	key := strings.TrimSpace(segments[0])
 	options := segments[1:]
 
@@ -135,6 +141,23 @@ func doParseKeyAndOptions(field reflect.StructField, value string) (string, *fie
 	}
 
 	return key, &fieldOpts, nil
+}
+
+// ensureValue ensures nested members not to be nil.
+// If pointer value is nil, set to a new value.
+func ensureValue(v reflect.Value) reflect.Value {
+	for {
+		if v.Kind() != reflect.Ptr {
+			break
+		}
+
+		if v.IsNil() {
+			v.Set(reflect.New(v.Type().Elem()))
+		}
+		v = v.Elem()
+	}
+
+	return v
 }
 
 func implicitValueRequiredStruct(tag string, tp reflect.Type) (bool, error) {
@@ -196,6 +219,16 @@ func maybeNewValue(field reflect.StructField, value reflect.Value) {
 	if field.Type.Kind() == reflect.Ptr && value.IsNil() {
 		value.Set(reflect.New(value.Type().Elem()))
 	}
+}
+
+func parseGroupedSegments(val string) []string {
+	val = strings.TrimLeftFunc(val, func(r rune) bool {
+		return r == leftBracket || r == leftSquareBracket
+	})
+	val = strings.TrimRightFunc(val, func(r rune) bool {
+		return r == rightBracket || r == rightSquareBracket
+	})
+	return parseSegments(val)
 }
 
 // don't modify returned fieldOptions, it's cached and shared among different calls.
@@ -278,6 +311,20 @@ func parseNumberRange(str string) (*numberRange, error) {
 		right = math.MaxFloat64
 	}
 
+	if left > right {
+		return nil, errNumberRange
+	}
+
+	// [2:2] valid
+	// [2:2) invalid
+	// (2:2] invalid
+	// (2:2) invalid
+	if left == right {
+		if !leftInclude || !rightInclude {
+			return nil, errNumberRange
+		}
+	}
+
 	return &numberRange{
 		left:         left,
 		leftInclude:  leftInclude,
@@ -309,7 +356,7 @@ func parseOption(fieldOpts *fieldOptions, fieldName, option string) error {
 			return fmt.Errorf("field %s has wrong options", fieldName)
 		}
 
-		fieldOpts.Options = strings.Split(segs[1], optionSeparator)
+		fieldOpts.Options = parseOptions(segs[1])
 	case strings.HasPrefix(option, defaultOption):
 		segs := strings.Split(option, equalToken)
 		if len(segs) != 2 {
@@ -332,6 +379,69 @@ func parseOption(fieldOpts *fieldOptions, fieldName, option string) error {
 	}
 
 	return nil
+}
+
+// parseOptions parses the given options in tag.
+// for example: `json:"name,options=foo|bar"` or `json:"name,options=[foo,bar]"`
+func parseOptions(val string) []string {
+	if len(val) == 0 {
+		return nil
+	}
+
+	if val[0] == leftSquareBracket {
+		return parseGroupedSegments(val)
+	}
+
+	return strings.Split(val, optionSeparator)
+}
+
+func parseSegments(val string) []string {
+	var segments []string
+	var escaped, grouped bool
+	var buf strings.Builder
+
+	for _, ch := range val {
+		if escaped {
+			buf.WriteRune(ch)
+			escaped = false
+			continue
+		}
+
+		switch ch {
+		case segmentSeparator:
+			if grouped {
+				buf.WriteRune(ch)
+			} else {
+				// need to trim spaces, but we cannot ignore empty string,
+				// because the first segment stands for the key might be empty.
+				// if ignored, the later tag will be used as the key.
+				segments = append(segments, strings.TrimSpace(buf.String()))
+				buf.Reset()
+			}
+		case escapeChar:
+			if grouped {
+				buf.WriteRune(ch)
+			} else {
+				escaped = true
+			}
+		case leftBracket, leftSquareBracket:
+			buf.WriteRune(ch)
+			grouped = true
+		case rightBracket, rightSquareBracket:
+			buf.WriteRune(ch)
+			grouped = false
+		default:
+			buf.WriteRune(ch)
+		}
+	}
+
+	last := strings.TrimSpace(buf.String())
+	// ignore last empty string
+	if len(last) > 0 {
+		segments = append(segments, last)
+	}
+
+	return segments
 }
 
 func reprOfValue(val reflect.Value) string {
@@ -399,6 +509,7 @@ func setValue(kind reflect.Kind, value reflect.Value, str string) error {
 		return errValueNotSettable
 	}
 
+	value = ensureValue(value)
 	v, err := convertType(kind, str)
 	if err != nil {
 		return err
@@ -513,16 +624,16 @@ func validateNumberRange(fv float64, nr *numberRange) error {
 	return nil
 }
 
-func validateValueInOptions(options []string, value interface{}) error {
+func validateValueInOptions(val interface{}, options []string) error {
 	if len(options) > 0 {
-		switch v := value.(type) {
+		switch v := val.(type) {
 		case string:
 			if !stringx.Contains(options, v) {
 				return fmt.Errorf(`error: value "%s" is not defined in options "%v"`, v, options)
 			}
 		default:
 			if !stringx.Contains(options, Repr(v)) {
-				return fmt.Errorf(`error: value "%v" is not defined in options "%v"`, value, options)
+				return fmt.Errorf(`error: value "%v" is not defined in options "%v"`, val, options)
 			}
 		}
 	}

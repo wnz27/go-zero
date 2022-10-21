@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/tal-tech/go-zero/core/hash"
-	"github.com/tal-tech/go-zero/core/stores/redis"
+	"github.com/zeromicro/go-zero/core/hash"
+	"github.com/zeromicro/go-zero/core/stores/redis"
 )
 
 const (
@@ -69,11 +69,8 @@ func (f *Filter) Exists(data []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !isSet {
-		return false, nil
-	}
 
-	return true, nil
+	return isSet, nil
 }
 
 func (f *Filter) getLocations(data []byte) []uint {

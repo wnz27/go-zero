@@ -1,20 +1,24 @@
 package command
 
 import (
+	_ "embed"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
-	"github.com/tal-tech/go-zero/tools/goctl/model/sql/gen"
-
 	"github.com/stretchr/testify/assert"
-	"github.com/tal-tech/go-zero/tools/goctl/config"
-	"github.com/tal-tech/go-zero/tools/goctl/util"
+
+	"github.com/zeromicro/go-zero/tools/goctl/config"
+	"github.com/zeromicro/go-zero/tools/goctl/model/sql/gen"
+	"github.com/zeromicro/go-zero/tools/goctl/util/pathx"
 )
 
 var (
-	sql = "-- 用户表 --\nCREATE TABLE `user` (\n  `id` bigint(10) NOT NULL AUTO_INCREMENT,\n  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT '用户名称',\n  `password` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT '用户密码',\n  `mobile` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT '手机号',\n  `gender` char(5) COLLATE utf8mb4_general_ci NOT NULL COMMENT '男｜女｜未公开',\n  `nickname` varchar(255) COLLATE utf8mb4_general_ci DEFAULT '' COMMENT '用户昵称',\n  `create_time` timestamp NULL DEFAULT CURRENT_TIMESTAMP,\n  `update_time` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  UNIQUE KEY `name_index` (`name`),\n  UNIQUE KEY `mobile_index` (`mobile`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;\n\n"
+	//go:embed testdata/user.sql
+	sql string
 	cfg = &config.Config{
 		NamingFormat: "gozero",
 	}
@@ -24,12 +28,25 @@ func TestFromDDl(t *testing.T) {
 	err := gen.Clean()
 	assert.Nil(t, err)
 
-	err = fromDDL("./user.sql", t.TempDir(), cfg, true, false, "go_zero")
+	err = fromDDL(ddlArg{
+		src:      "./user.sql",
+		dir:      pathx.MustTempDir(),
+		cfg:      cfg,
+		cache:    true,
+		database: "go-zero",
+		strict:   false,
+	})
 	assert.Equal(t, errNotMatched, err)
 
 	// case dir is not exists
-	unknownDir := filepath.Join(t.TempDir(), "test", "user.sql")
-	err = fromDDL(unknownDir, t.TempDir(), cfg, true, false, "go_zero")
+	unknownDir := filepath.Join(pathx.MustTempDir(), "test", "user.sql")
+	err = fromDDL(ddlArg{
+		src:      unknownDir,
+		dir:      pathx.MustTempDir(),
+		cfg:      cfg,
+		cache:    true,
+		database: "go_zero",
+	})
 	assert.True(t, func() bool {
 		switch err.(type) {
 		case *os.PathError:
@@ -40,13 +57,18 @@ func TestFromDDl(t *testing.T) {
 	}())
 
 	// case empty src
-	err = fromDDL("", t.TempDir(), cfg, true, false, "go_zero")
+	err = fromDDL(ddlArg{
+		dir:      pathx.MustTempDir(),
+		cfg:      cfg,
+		cache:    true,
+		database: "go_zero",
+	})
 	if err != nil {
 		assert.Equal(t, "expected path or path globbing patterns, but nothing found", err.Error())
 	}
 
-	tempDir := filepath.Join(t.TempDir(), "test")
-	err = util.MkdirIfNotExist(tempDir)
+	tempDir := filepath.Join(pathx.MustTempDir(), "test")
+	err = pathx.MkdirIfNotExist(tempDir)
 	if err != nil {
 		return
 	}
@@ -72,7 +94,13 @@ func TestFromDDl(t *testing.T) {
 
 	filename := filepath.Join(tempDir, "usermodel.go")
 	fromDDL := func(db string) {
-		err = fromDDL(filepath.Join(tempDir, "user*.sql"), tempDir, cfg, true, false, db)
+		err = fromDDL(ddlArg{
+			src:      filepath.Join(tempDir, "user*.sql"),
+			dir:      tempDir,
+			cfg:      cfg,
+			cache:    true,
+			database: db,
+		})
 		assert.Nil(t, err)
 
 		_, err = os.Stat(filename)
@@ -84,4 +112,31 @@ func TestFromDDl(t *testing.T) {
 	fromDDL("go-zero")
 	_ = os.Remove(filename)
 	fromDDL("1gozero")
+}
+
+func Test_parseTableList(t *testing.T) {
+	testData := []string{"foo", "b*", "bar", "back_up", "foo,bar,b*"}
+	patterns := parseTableList(testData)
+	actual := patterns.list()
+	expected := []string{"foo", "b*", "bar", "back_up"}
+	sort.Slice(actual, func(i, j int) bool {
+		return actual[i] > actual[j]
+	})
+	sort.Slice(expected, func(i, j int) bool {
+		return expected[i] > expected[j]
+	})
+	assert.Equal(t, strings.Join(expected, ","), strings.Join(actual, ","))
+
+	matchTestData := map[string]bool{
+		"foo":     true,
+		"bar":     true,
+		"back_up": true,
+		"bit":     true,
+		"ab":      false,
+		"b":       true,
+	}
+	for v, expected := range matchTestData {
+		actual := patterns.Match(v)
+		assert.Equal(t, expected, actual)
+	}
 }
